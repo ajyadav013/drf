@@ -1,6 +1,7 @@
+import datetime
 from django.db import models
-
-# Create your models here.
+from django.db.models.signals import post_save, post_delete
+from django.core.cache import cache
 from django.db import models
 from pygments.lexers import get_all_lexers
 from pygments.styles import get_all_styles
@@ -12,6 +13,10 @@ from pygments import highlight
 LEXERS = [item for item in get_all_lexers() if item[1]]
 LANGUAGE_CHOICES = sorted([(item[1][0], item[0]) for item in LEXERS])
 STYLE_CHOICES = sorted((item, item) for item in get_all_styles())
+
+
+def change_api_updated_at(sender=None, instance=None, *args, **kwargs):
+    cache.set('api_updated_at_timestamp', datetime.datetime.utcnow())
 
 
 class Snippet(models.Model):
@@ -38,3 +43,7 @@ class Snippet(models.Model):
                                   full=True, **options)
         self.highlighted = highlight(self.code, lexer, formatter)
         super(Snippet, self).save(*args, **kwargs)
+
+for model in [Snippet]:
+    post_save.connect(change_api_updated_at, sender=model)
+    post_delete.connect(change_api_updated_at, sender=model)

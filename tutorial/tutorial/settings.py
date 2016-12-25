@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'rest_framework_extensions',
     'rest_framework.authtoken',
     'snippets.apps.SnippetsConfig'
 ]
@@ -102,6 +103,9 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+REST_FRAMEWORK_EXTENSIONS = {
+    'DEFAULT_CACHE_RESPONSE_TIMEOUT': 60 * 15  # Cache timeout set to 15 minutes
+}
 
 REST_FRAMEWORK = {
     'PAGE_SIZE': 10,

@@ -1,5 +1,10 @@
 from django.contrib.auth.models import User
 from django.shortcuts import get_object_or_404
+import datetime
+from django.core.cache import cache
+from django.utils.encoding import force_text
+
+
 from rest_framework import (renderers, viewsets, generics, permissions)
 from rest_framework.decorators import (
     api_view, detail_route, parser_classes, throttle_classes, permission_classes, authentication_classes)
@@ -12,7 +17,15 @@ from rest_framework.authentication import (
 from rest_framework.permissions import (IsAuthenticated)
 from rest_framework.authentication import (
     SessionAuthentication, BasicAuthentication)
-
+from rest_framework_extensions.cache.decorators import cache_response
+from rest_framework_extensions.key_constructor.constructors import (
+    DefaultKeyConstructor)
+from rest_framework_extensions.key_constructor.bits import (
+    KeyBitBase,
+    RetrieveSqlQueryKeyBit,
+    ListSqlQueryKeyBit,
+    PaginationKeyBit
+)
 
 from snippets.models import Snippet
 from snippets.serializers import (SnippetSerializer, UserSerializer)
@@ -31,6 +44,53 @@ def api_root(request, format=None):
     })
 
 
+class UpdatedAtKeyBit(KeyBitBase):
+
+    def get_data(self, **kwargs):
+        key = 'api_updated_at_timestamp'
+        value = cache.get(key, None)
+        if not value:
+            value = datetime.datetime.utcnow()
+            cache.set(key, value=value)
+        return force_text(value)
+
+
+# default key bit constructor 3 cheez leke (unique_method_id, format, language) ek dictionary banata hai fir uska md5 checksum karta hai aur woh return karta hai jo store hota hai cache me
+# yeh apna custom keybit constructor hai
+# idhar hum usko 3 values se karre(retrieve_sql, updated_at)
+# updated at value upar calculate hoti hai
+
+# working:
+# ab jab bhi list ya retrieve call hota hai tab apna custom constructor call hoga, fir usme ki values(list k liye list_sql, pagination, updated_at aur retrieve k liye retrieve_sql, updated_at) fetch hogi
+# ab apna updated_at wala call hoga jo cache me se key dekhega aur agar nai hoga toh naya banayega datetime leke aur fir woh as a string return kar dega
+# fir apna custom cnstructor ne jo default ko inherit kiya hai, usse yeh values pass karega jo md5 checksum banake dega
+# ab fetch karte time agar backend me stored value match karega yeh
+# checksum se means data change nai hua hai, aur bina sql query mare data
+# return karega, aur agar dono checksum alag rahe(jab post ya update ya
+# delete action karte hai tab naya value store ho jata hai jo models.py me
+# likha hai implementation -> post ya delete action k signal pe naya cache
+# set karna)
+# And that's it. When any model changes then value in cache by key
+# api_updated_at_timestamp will be changed too. After this every key
+# constructor, that used UpdatedAtKeyBit, will construct new keys and
+# @cache_response decorator will cache data in new places.
+
+
+class CustomObjectKeyConstructor(DefaultKeyConstructor):
+    retrieve_sql = RetrieveSqlQueryKeyBit()
+    updated_at = UpdatedAtKeyBit()
+
+
+class CustomListKeyConstructor(DefaultKeyConstructor):
+    list_sql = ListSqlQueryKeyBit()
+    pagination = PaginationKeyBit()
+    updated_at = UpdatedAtKeyBit()
+
+    print("List SQL", list_sql)
+    print("pagination", pagination)
+    print("updated_at", updated_at)
+
+
 class UserViewSet(viewsets.ModelViewSet):
     throttle_scope = 'sustained'  # sustained defined in settings.py
     #queryset = User.objects.all()
@@ -40,12 +100,14 @@ class UserViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return User.objects.all()
 
+    @cache_response(key_func=CustomListKeyConstructor())
     def list(self, request):
         queryset = self.get_queryset()
         serializer = UserSerializer(
             queryset, many=True, context={'request': request})
         return Response(serializer.data)
 
+    @cache_response(key_func=CustomObjectKeyConstructor())
     def retrieve(self, request, pk=None):
         queryset = User.objects.all()
         user = get_object_or_404(queryset, pk=pk)
@@ -68,6 +130,21 @@ class SnippetViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return Snippet.objects.all()
 
+    @cache_response(key_func=CustomListKeyConstructor())
+    def list(self, request):
+        queryset = self.get_queryset()
+        serializer = SnippetSerializer(
+            queryset, many=True, context={'request': request})
+        return Response(serializer.data)
+
+    @detail_route(methods=['get'], renderer_classes=[renderers.StaticHTMLRenderer])
+    def highlight(self, request, *args, **kwargs):
+        snippet = self.get_object()
+        return Response(snippet.highlighted)
+
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
+
     # def get(self, request, format=None):
     #     print("get------------", request)
     #     content = {
@@ -82,14 +159,6 @@ class SnippetViewSet(viewsets.ModelViewSet):
     #     obj = get_object_or_404(Snippet.objects.all())
     #     self.check_object_permissions(self.request, obj)
     #     return obj
-
-    @detail_route(renderer_classes=[renderers.StaticHTMLRenderer])
-    def highlight(self, request, *args, **kwargs):
-        snippet = self.get_object()
-        return Response(snippet.highlighted)
-
-    def perform_create(self, serializer):
-        serializer.save(owner=self.request.user)
 
         #----------------------------------------------------------------------
         # class SnippetHighlight(generics.GenericAPIView):

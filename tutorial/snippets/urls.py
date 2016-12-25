@@ -1,6 +1,6 @@
 from django.conf.urls import (url, include)
 from rest_framework.urlpatterns import format_suffix_patterns
-from rest_framework.routers import DefaultRouter
+from rest_framework.routers import SimpleRouter
 from snippets.views import (SnippetViewSet,  UserViewSet, api_root)
 
 snippet_list = SnippetViewSet.as_view({
@@ -29,7 +29,7 @@ user_detail = UserViewSet.as_view({
 })
 
 
-router = DefaultRouter()
+router = SimpleRouter()
 router.register(r'snippets', SnippetViewSet, base_name="snippet")
 router.register(r'users', UserViewSet, base_name="user")
 
